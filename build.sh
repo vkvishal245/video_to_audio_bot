@@ -2,17 +2,16 @@
 
 set -e
 
-echo "Installing yt-dlp and FFmpeg..."
+echo "Installing yt-dlp..."
 
-apt-get update
-apt-get install -y ffmpeg
+mkdir -p bin
 
 curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-  -o /usr/local/bin/yt-dlp
+  -o bin/yt-dlp
 
-chmod a+rx /usr/local/bin/yt-dlp
+chmod +x bin/yt-dlp
 
-echo "Checking installations..."
+echo "Checking yt-dlp..."
+./bin/yt-dlp --version
 
-yt-dlp --version
-ffmpeg -version
+echo "Build dependencies ready!"
