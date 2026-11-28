@@ -136,10 +136,8 @@ export async function downloadAudio(url, { requestId = randomUUID() } = {}) {
             cookieArgs.push('--cookies', cookiePath);
         }
         const download = execFileAsync(await getDownloaderPath(), [
-            '--ignore-config',
             ...cookieArgs,
             '--no-progress',
-            '--js-runtimes', `node:${process.execPath}`,
             '-f', 'bestaudio',
             '-x',
             '--audio-format', 'mp3',
