@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Bot } from 'node-telegram-bot-api';
 import app from '../app.js';
-import { validateYouTubeUrl, getDownloaderPath, downloadAudio, cleanupAudio, checkAudioTools } from '../youtubeservice.js';
+import { validateYouTubeUrl, getDownloaderPath, downloadAudio, cleanupAudio, checkAudioTools, describeDownloadFailure } from '../youtubeservice.js';
 
 const url = 'https://youtu.be/EF-7XiyKKKc?si=lnFgx1OJU60N8ICw';
 
@@ -18,6 +18,9 @@ test('URL validation accepts the reported link and rejects unsupported input', (
 });
 
 test('downloader, message routing, and cleanup regressions', async (t) => {
+    const logs = [];
+    t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+    t.mock.method(console, 'error', (...args) => logs.push(args.join(' ')));
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'audio-bot-test-'));
     const originalEnv = { ...process.env };
     t.after(async () => {
@@ -59,6 +62,8 @@ if (process.env.FAKE_DOWNLOAD_FAIL) { console.error('sensitive internal error');
     process.env.FAKE_DOWNLOAD_FAIL = '1';
     await assert.rejects(downloadAudio(url), /Could not download or convert/);
     assert.deepEqual(await fs.readdir(downloads), beforeFailure);
+    assert.ok(logs.some((line) => line.includes('"event":"download_failed"')));
+    assert.ok(!logs.some((line) => line.includes('sensitive internal error') || line.includes(url)));
     delete process.env.FAKE_DOWNLOAD_FAIL;
 
     let handler;
@@ -92,9 +97,13 @@ if (process.env.FAKE_DOWNLOAD_FAIL) { console.error('sensitive internal error');
     await handler(ctx(url));
     assert.equal(sends, 1);
     assert.deepEqual(await fs.readdir(downloads), beforeFailure);
-    api.sendDocument = async () => { throw new Error('simulated Telegram failure'); };
+    api.sendDocument = async () => {
+        throw Object.assign(new Error('simulated Telegram failure'), { errorCode: 413, description: 'Request Entity Too Large' });
+    };
     await handler(ctx(url));
     assert.match(replies.at(-1), /could not be delivered/);
+    assert.ok(logs.some((line) => line.includes('"telegramErrorCode":413') && line.includes('telegram_file_too_large') && line.includes('uploading_to_telegram')));
+    assert.ok(logs.some((line) => line.includes('telegram_upload_complete')));
     assert.deepEqual(await fs.readdir(downloads), beforeFailure);
 
     process.env.YT_DLP_PATH = path.join(tempDir, 'missing-tool');
@@ -105,4 +114,16 @@ if (process.env.FAKE_DOWNLOAD_FAIL) { console.error('sensitive internal error');
     await fs.unlink(path.join(tempDir, 'ffmpeg'));
     process.env.PATH = tempDir;
     await assert.rejects(checkAudioTools(), /FFmpeg startup check failed \(executable or required interpreter not found\)/);
+});
+
+test('download diagnostics classify known errors without echoing raw output', () => {
+    for (const [stderr, reason] of [
+        ['Sign in to confirm you’re not a bot', 'youtube_bot_verification_required'],
+        ['HTTP Error 429: Too Many Requests', 'youtube_rate_limited'],
+        ['HTTP Error 403: Forbidden', 'media_access_forbidden'],
+        ['ERROR: Postprocessing: Conversion failed!', 'audio_conversion_failed'],
+        ['Requested format is not available', 'audio_format_unavailable'],
+        ['No supported JavaScript runtime could be found', 'youtube_javascript_challenge_failed'],
+        ['sensitive unknown failure', 'unclassified_download_error'],
+    ]) assert.equal(describeDownloadFailure({ stderr }), reason);
 });

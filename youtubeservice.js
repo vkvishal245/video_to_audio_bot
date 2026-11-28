@@ -76,8 +76,26 @@ function toolFailureReason(error) {
     return 'executable returned an error';
 }
 
-export async function downloadAudio(url) {
+export function describeDownloadFailure(error) {
+    const stderr = String(error.stderr || '');
+    if (error.code === 'ENOENT' || error.code === 'EACCES') return 'downloader_missing_or_not_executable';
+    if (/sign in to confirm.*not a bot|confirm you.re not a bot/i.test(stderr)) return 'youtube_bot_verification_required';
+    if (/HTTP Error 429|too many requests/i.test(stderr)) return 'youtube_rate_limited';
+    if (/HTTP Error 403|forbidden/i.test(stderr)) return 'media_access_forbidden';
+    if (/ffmpeg.*not found|ffprobe.*not found/i.test(stderr)) return 'ffmpeg_or_ffprobe_missing';
+    if (/postprocessing|conversion failed/i.test(stderr)) return 'audio_conversion_failed';
+    if (/requested format.*not available/i.test(stderr)) return 'audio_format_unavailable';
+    if (/javascript runtime|challenge solving|n challenge|signature extraction/i.test(stderr)) return 'youtube_javascript_challenge_failed';
+    if (/private video|video unavailable|not available|age.restricted|sign in to confirm your age/i.test(stderr)) return 'video_unavailable_or_restricted';
+    if (/timed out|name resolution|unable to download webpage|network is unreachable/i.test(stderr)) return 'network_request_failed';
+    if (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return 'downloader_output_limit_exceeded';
+    return 'unclassified_download_error';
+}
+
+export async function downloadAudio(url, { requestId = randomUUID() } = {}) {
     const validatedUrl = validateYouTubeUrl(url);
+    const startedAt = Date.now();
+    const logStage = (stage, extra = {}) => console.log(JSON.stringify({ requestId, stage, elapsedMs: Date.now() - startedAt, ...extra }));
 
     // 3. Create downloads folder
     const downloadDir = fileURLToPath(new URL('./downloads/', import.meta.url));
@@ -90,9 +108,12 @@ export async function downloadAudio(url) {
     const filePath = path.join(requestDir, fileName);
 
     // 5. Download audio and convert to MP3
+    let stage = 'starting_downloader';
+    logStage(stage);
     try {
-        await execFileAsync(await getDownloaderPath(), [
+        const download = execFileAsync(await getDownloaderPath(), [
             '--ignore-config',
+            '--no-progress',
             '--js-runtimes', `node:${process.execPath}`,
             '-f', 'bestaudio',
             '-x',
@@ -101,8 +122,29 @@ export async function downloadAudio(url) {
             '-o', path.join(requestDir, `${path.parse(fileName).name}.%(ext)s`),
             '--', validatedUrl
         ]);
+        // Only log recognized milestones, never raw tool output or URLs.
+        let pendingOutput = '';
+        download.child.stdout.on('data', (chunk) => {
+            pendingOutput += chunk.toString();
+            const lines = pendingOutput.split('\n');
+            pendingOutput = lines.pop().slice(-4096);
+            for (const line of lines) {
+                const nextStage = line.includes('[ExtractAudio]') ? 'converting_to_mp3'
+                    : line.includes('[download]') ? 'downloading_audio' : null;
+                if (nextStage && nextStage !== stage) {
+                    stage = nextStage;
+                    logStage(stage);
+                }
+            }
+        });
+        await download;
         await fs.access(filePath);
+        logStage('mp3_ready');
     } catch (error) {
+        console.error(JSON.stringify({ requestId, stage, event: 'download_failed',
+            reason: describeDownloadFailure(error),
+            exitCode: Number.isInteger(error.code) ? error.code : null,
+            elapsedMs: Date.now() - startedAt }));
         await fs.rm(requestDir, { recursive: true, force: true });
         if (error.code === 'ENOENT' || error.code === 'EACCES') {
             throw new Error('Audio downloader is unavailable. Please ask the bot owner to check the Render build configuration.');

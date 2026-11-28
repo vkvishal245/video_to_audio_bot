@@ -36,4 +36,8 @@ In another terminal, `curl --fail http://localhost:3000/` checks the health rout
 
 Each request has its own temporary directory. Failed downloads and completed or failed Telegram uploads remove their request files. YouTube may still reject videos because of restrictions or server IP rate limits.
 
+## Request diagnostics
+
+Render logs contain JSON records with a `requestId` so simultaneous requests can be followed separately. Milestones include `starting_downloader`, `downloading_audio`, `converting_to_mp3`, `mp3_ready`, `uploading_to_telegram`, and `telegram_upload_complete`. Download errors include elapsed time, exit code, and a reason classified from tool output, such as `youtube_bot_verification_required`, `media_access_forbidden`, or `audio_conversion_failed`. These classifications describe reported errors, not independently verified root causes. Telegram failures include the API error code when available. Raw process output, video URLs, credentials, and local audio paths are not logged. `unclassified_download_error` means the available diagnostics did not recognize the tool's error.
+
 The ignore rules prevent new credentials, installed packages, executables, and audio files from being added. Files already tracked by Git remain tracked and need separate cleanup; rotate any credentials that were previously published.

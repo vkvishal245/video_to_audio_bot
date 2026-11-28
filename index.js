@@ -5,6 +5,7 @@ import { downloadAudio, validateYouTubeUrl, checkAudioTools, cleanupAudio } from
 import { Bot, registerExpressWebhook } from 'node-telegram-bot-api';
 
 import { fromPath } from 'node-telegram-bot-api/node';
+import { randomUUID } from 'node:crypto';
 
 dotenv.config({ quiet: true });
 
@@ -24,6 +25,9 @@ registerExpressWebhook(bot, app, {
 
 bot.on('message', async (ctx) => {
     let filePath;
+    const requestId = randomUUID();
+    let stage = 'validating_message';
+    const logStage = (value, extra = {}) => console.log(JSON.stringify({ requestId, stage: value, ...extra }));
 
     try {
         const text = ctx.message.text?.trim();
@@ -37,27 +41,38 @@ bot.on('message', async (ctx) => {
             await ctx.reply('Please send a valid HTTPS YouTube video link (youtube.com or youtu.be).');
             return;
         }
+        stage = 'sending_download_notice';
+        logStage(stage);
         await ctx.reply('Downloading your audio. Please wait...');
-        filePath = await downloadAudio(text);
+        stage = 'downloading_and_converting';
+        filePath = await downloadAudio(text, { requestId });
 
-        console.log('Audio downloaded:', filePath);
+        stage = 'preparing_telegram_document';
+        logStage(stage);
         const document = await fromPath(filePath);
+        stage = 'uploading_to_telegram';
+        logStage(stage);
         await bot.api.sendDocument({
             chat_id: ctx.chat.id,
             document,
             caption: 'Your audio is ready! 🎵'
         });
 
-        console.log('Audio sent successfully!');
+        logStage('telegram_upload_complete');
 
     } catch (error) {
 
-        console.error('Audio request failed:', error.code || error.name);
+        console.error(JSON.stringify({ requestId, stage, event: 'request_failed',
+            telegramErrorCode: Number.isInteger(error.errorCode) ? error.errorCode : null,
+            reason: /file.*too (big|large)|request entity too large/i.test(error.description || '') ? 'telegram_file_too_large'
+                : error.code === 'ETIMEOUT' ? 'telegram_request_timed_out'
+                : error.code === 'EFETCH' ? 'telegram_network_error'
+                : Number.isInteger(error.errorCode) ? 'telegram_api_rejected_request' : 'see_download_logs' }));
 
         try {
             await ctx.reply('Sorry, the audio could not be delivered. The video may be unavailable or restricted. Please try again later.');
         } catch {
-            console.error('Could not send the failure reply');
+            console.error(JSON.stringify({ requestId, event: 'failure_reply_failed' }));
         }
 
     }
@@ -65,11 +80,12 @@ bot.on('message', async (ctx) => {
 
         // Step 5: Delete temporary file
         if (filePath) {
-            await cleanupAudio(filePath).catch((error) => {
-                console.error('File cleanup error:', error.code || error.name);
-            });
-
-            console.log('Temporary file deleted');
+            try {
+                await cleanupAudio(filePath);
+                logStage('temporary_files_removed');
+            } catch {
+                console.error(JSON.stringify({ requestId, event: 'cleanup_failed' }));
+            }
         }
     }
 });
