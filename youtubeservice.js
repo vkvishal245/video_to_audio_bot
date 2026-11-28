@@ -66,6 +66,21 @@ export async function checkAudioTools() {
     } catch (error) {
         throw new Error(`FFmpeg startup check failed (${toolFailureReason(error)}). Ensure the ffmpeg executable is available on the server PATH.`);
     }
+    await readConfiguredCookies();
+}
+
+async function readConfiguredCookies() {
+    const source = process.env.YT_DLP_COOKIES_FILE?.trim();
+    if (!source) return null;
+    try {
+        const contents = await fs.readFile(source);
+        if (!/^# (?:Netscape )?HTTP Cookie File\r?\n/.test(contents.toString('utf8', 0, 100))) {
+            throw new Error();
+        }
+        return contents;
+    } catch {
+        throw Object.assign(new Error('YT_DLP_COOKIES_FILE must point to a readable Netscape-format cookies file. Cookie contents were not logged.'), { code: 'COOKIE_FILE_INVALID' });
+    }
 }
 
 function toolFailureReason(error) {
@@ -111,8 +126,18 @@ export async function downloadAudio(url, { requestId = randomUUID() } = {}) {
     let stage = 'starting_downloader';
     logStage(stage);
     try {
+        const cookieArgs = [];
+        const cookies = await readConfiguredCookies();
+        if (cookies) {
+            // yt-dlp writes its cookie jar; keep the secret source read-only and
+            // isolate each request so concurrent downloads cannot overwrite it.
+            const cookiePath = path.join(requestDir, 'cookies.txt');
+            await fs.writeFile(cookiePath, cookies, { mode: 0o600 });
+            cookieArgs.push('--cookies', cookiePath);
+        }
         const download = execFileAsync(await getDownloaderPath(), [
             '--ignore-config',
+            ...cookieArgs,
             '--no-progress',
             '--js-runtimes', `node:${process.execPath}`,
             '-f', 'bestaudio',
@@ -141,11 +166,16 @@ export async function downloadAudio(url, { requestId = randomUUID() } = {}) {
         await fs.access(filePath);
         logStage('mp3_ready');
     } catch (error) {
+        const reason = describeDownloadFailure(error);
         console.error(JSON.stringify({ requestId, stage, event: 'download_failed',
-            reason: describeDownloadFailure(error),
+            reason: error.code === 'COOKIE_FILE_INVALID' ? 'cookie_configuration_invalid' : reason,
             exitCode: Number.isInteger(error.code) ? error.code : null,
             elapsedMs: Date.now() - startedAt }));
         await fs.rm(requestDir, { recursive: true, force: true });
+        if (error.code === 'COOKIE_FILE_INVALID') throw error;
+        if (reason === 'youtube_bot_verification_required') {
+            throw Object.assign(new Error('YouTube requires verification for this server.'), { code: 'YOUTUBE_BOT_VERIFICATION_REQUIRED' });
+        }
         if (error.code === 'ENOENT' || error.code === 'EACCES') {
             throw new Error('Audio downloader is unavailable. Please ask the bot owner to check the Render build configuration.');
         }

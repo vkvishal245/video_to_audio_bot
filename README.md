@@ -19,6 +19,19 @@ If startup fails, inspect the tool-specific startup error and the earlier build 
 
 `spawn yt-dlp ENOENT` means the executable could not be launched; it is not a YouTube URL error. Installing npm packages alone does not install yt-dlp. `/start` now returns instructions, and ordinary text or unsupported URLs are rejected before a download begins.
 
+## Testing authenticated YouTube access on Render
+
+When logs show `youtube_bot_verification_required`, YouTube rejected the server request before downloading. Cookies are an optional diagnostic and authentication method, not a guaranteed fix for restrictions on a server IP. Another cloud provider may have the same issue.
+
+1. Export your own YouTube cookies in Netscape format following the official guide: https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies. Use only content you are authorized to download. The guide cautions that using an account with yt-dlp can result in account restrictions; prefer a separate account rather than your main account. Cookies grant access as that account, so only use this configuration for trusted bot users.
+2. In Render, open the service's **Environment → Secret Files → Add file**. Name the file `youtube-cookies.txt` and paste the exported contents there. Do not put cookies in Git, Telegram messages, or chat.
+3. Add the environment variable `YT_DLP_COOKIES_FILE=/etc/secrets/youtube-cookies.txt`. Render secret-file documentation: https://render.com/docs/configure-environment-variables#secret-files.
+4. Deploy the updated code with the existing build/start commands. Startup validates that the configured file is readable and has a Netscape cookie header. The cookie setting is optional; omit it to continue anonymous downloads.
+5. Telegram currently points to the local ngrok tunnel used for testing. Before testing Render, re-register the webhook with your Render HTTPS URL plus `/telegrambot`, using the same webhook secret. Merely deploying to Render does not change Telegram's webhook.
+6. Test one authorized public video and inspect the request logs. Expired cookies need replacement. If the same verification error persists, authentication did not resolve the restriction; do not assume repeated redeploys or a paid hosting plan will fix it.
+
+The service copies the cookie file into each request's temporary directory with private permissions. yt-dlp updates that copy; the source secret file is left untouched. Cleanup removes the temporary copy on download failure or after Telegram sending succeeds or fails. Neither cookies nor their paths are logged. Local files with `cookies` in their `.txt` filename are ignored by Git.
+
 ## Local verification
 
 Install yt-dlp and FFmpeg on your PATH, or run `bash build.sh` to download yt-dlp (Python 3 is required by that executable). An optional `YT_DLP_PATH` overrides the downloader executable location.

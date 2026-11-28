@@ -6,3 +6,4 @@ downloads/
 bin/
 build/
 dist/
+*cookies*.txt

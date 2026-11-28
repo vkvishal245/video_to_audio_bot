@@ -32,7 +32,10 @@ bot.on('message', async (ctx) => {
     try {
         const text = ctx.message.text?.trim();
         if (/^\/start(?:@\w+)?(?:\s|$)/i.test(text || '')) {
-            await ctx.reply('Hi! Paste your YouTube link and I’ll send you the audio download.');
+            const greeting = process.env.BOT_LOCAL_MODE === 'true'
+                ? 'Hi! The local server is running. Paste your YouTube link and I’ll send you the audio download.'
+                : 'Hi! Paste your YouTube link and I’ll send you the audio download.';
+            await ctx.reply(greeting);
             return;
         }
         try {
@@ -70,7 +73,10 @@ bot.on('message', async (ctx) => {
                 : Number.isInteger(error.errorCode) ? 'telegram_api_rejected_request' : 'see_download_logs' }));
 
         try {
-            await ctx.reply('Sorry, the audio could not be delivered. The video may be unavailable or restricted. Please try again later.');
+            const message = error.code === 'YOUTUBE_BOT_VERIFICATION_REQUIRED'
+                ? 'YouTube is blocking downloads from this server and requires verification. The bot owner needs to check the server’s YouTube access.'
+                : 'Sorry, the audio could not be delivered. The video may be unavailable or restricted. Please try again later.';
+            await ctx.reply(message);
         } catch {
             console.error(JSON.stringify({ requestId, event: 'failure_reply_failed' }));
         }

@@ -32,10 +32,20 @@ test('downloader, message routing, and cleanup regressions', async (t) => {
 import fs from 'node:fs/promises';
 const args = process.argv.slice(2);
 if (args.includes('--version') || args.includes('-version')) process.exit(0);
+if (process.env.YT_DLP_COOKIES_FILE) {
+ const jar = args[args.indexOf('--cookies') + 1];
+ if (!args.includes('--cookies') || jar === process.env.YT_DLP_COOKIES_FILE) process.exit(2);
+ const contents = await fs.readFile(jar, 'utf8');
+ if (!contents.includes('test-cookie-secret')) process.exit(3);
+ await fs.appendFile(jar, '# updated by downloader\\n');
+}
 const output = args[args.indexOf('-o') + 1].replace('%(ext)s', 'mp3');
 await fs.writeFile(output, 'fake mp3');
 await fs.writeFile(output + '.part', 'partial');
-if (process.env.FAKE_DOWNLOAD_FAIL) { console.error('sensitive internal error'); process.exit(1); }
+if (process.env.FAKE_DOWNLOAD_FAIL) {
+ await new Promise(resolve => process.stderr.write((process.env.FAKE_DOWNLOAD_ERROR || 'sensitive internal error') + '\\n', resolve));
+ process.exitCode = 1;
+}
 `;
     await fs.writeFile(path.join(tempDir, 'package.json'), '{"type":"module"}');
     for (const name of ['yt-dlp', 'ffmpeg']) {
@@ -66,6 +76,33 @@ if (process.env.FAKE_DOWNLOAD_FAIL) { console.error('sensitive internal error');
     assert.ok(!logs.some((line) => line.includes('sensitive internal error') || line.includes(url)));
     delete process.env.FAKE_DOWNLOAD_FAIL;
 
+    const cookieSource = path.join(tempDir, 'source-cookies.txt');
+    const cookieContents = '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\ttest\ttest-cookie-secret\n';
+    await fs.writeFile(cookieSource, cookieContents, { mode: 0o400 });
+    process.env.YT_DLP_COOKIES_FILE = cookieSource;
+    await checkAudioTools();
+    const authenticatedAudio = await downloadAudio(url);
+    const cookieCopy = path.join(path.dirname(authenticatedAudio), 'cookies.txt');
+    assert.equal((await fs.stat(cookieCopy)).mode & 0o777, 0o600);
+    assert.equal(await fs.readFile(cookieSource, 'utf8'), cookieContents);
+    await cleanupAudio(authenticatedAudio);
+    await assert.rejects(fs.access(cookieCopy));
+    process.env.FAKE_DOWNLOAD_FAIL = '1';
+    process.env.FAKE_DOWNLOAD_ERROR = 'Sign in to confirm you are not a bot';
+    await assert.rejects(downloadAudio(url), { code: 'YOUTUBE_BOT_VERIFICATION_REQUIRED' });
+    assert.deepEqual(await fs.readdir(downloads), beforeFailure);
+    assert.ok(!logs.some((line) => line.includes('test-cookie-secret') || line.includes(cookieSource)));
+    delete process.env.FAKE_DOWNLOAD_FAIL;
+    delete process.env.FAKE_DOWNLOAD_ERROR;
+    process.env.YT_DLP_COOKIES_FILE = path.join(tempDir, 'missing-cookies.txt');
+    await assert.rejects(checkAudioTools(), { code: 'COOKIE_FILE_INVALID' });
+    await assert.rejects(downloadAudio(url), { code: 'COOKIE_FILE_INVALID' });
+    assert.deepEqual(await fs.readdir(downloads), beforeFailure);
+    process.env.YT_DLP_COOKIES_FILE = path.join(tempDir, 'not-cookies.txt');
+    await fs.writeFile(process.env.YT_DLP_COOKIES_FILE, 'invalid cookie format');
+    await assert.rejects(checkAudioTools(), { code: 'COOKIE_FILE_INVALID' });
+    delete process.env.YT_DLP_COOKIES_FILE;
+
     let handler;
     let api;
     t.mock.method(Bot.prototype, 'on', function (kind, callback) {
@@ -88,6 +125,10 @@ if (process.env.FAKE_DOWNLOAD_FAIL) { console.error('sensitive internal error');
     assert.match(replies[1], /valid HTTPS/);
     assert.match(replies[2], /valid HTTPS/);
     assert.equal(replies.length, 3);
+    process.env.BOT_LOCAL_MODE = 'true';
+    await handler(ctx('/start'));
+    assert.match(replies.at(-1), /The local server is running\. Paste your YouTube link/);
+    delete process.env.BOT_LOCAL_MODE;
 
     let sends = 0;
     t.mock.method(api, 'sendDocument', async ({ chat_id }) => {
@@ -97,6 +138,13 @@ if (process.env.FAKE_DOWNLOAD_FAIL) { console.error('sensitive internal error');
     await handler(ctx(url));
     assert.equal(sends, 1);
     assert.deepEqual(await fs.readdir(downloads), beforeFailure);
+    process.env.FAKE_DOWNLOAD_FAIL = '1';
+    process.env.FAKE_DOWNLOAD_ERROR = 'Sign in to confirm you are not a bot';
+    await handler(ctx(url));
+    assert.match(replies.at(-1), /YouTube is blocking downloads from this server/);
+    assert.equal(sends, 1);
+    delete process.env.FAKE_DOWNLOAD_FAIL;
+    delete process.env.FAKE_DOWNLOAD_ERROR;
     api.sendDocument = async () => {
         throw Object.assign(new Error('simulated Telegram failure'), { errorCode: 413, description: 'Request Entity Too Large' });
     };
