@@ -98,7 +98,11 @@ if (process.env.FAKE_DOWNLOAD_FAIL) { console.error('sensitive internal error');
     assert.deepEqual(await fs.readdir(downloads), beforeFailure);
 
     process.env.YT_DLP_PATH = path.join(tempDir, 'missing-tool');
-    await assert.rejects(checkAudioTools(), /Audio tools unavailable/);
+    await assert.rejects(checkAudioTools(), /yt-dlp startup check failed \(executable or required interpreter not found\)/);
     await assert.rejects(downloadAudio(url), /downloader is unavailable/);
     assert.deepEqual(await fs.readdir(downloads), beforeFailure);
+    process.env.YT_DLP_PATH = path.join(tempDir, 'yt-dlp');
+    await fs.unlink(path.join(tempDir, 'ffmpeg'));
+    process.env.PATH = tempDir;
+    await assert.rejects(checkAudioTools(), /FFmpeg startup check failed \(executable or required interpreter not found\)/);
 });

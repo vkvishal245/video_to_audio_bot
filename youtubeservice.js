@@ -53,12 +53,27 @@ export async function getDownloaderPath() {
 }
 
 export async function checkAudioTools() {
+    let downloader;
     try {
-        await execFileAsync(await getDownloaderPath(), ['--version']);
-        await execFileAsync('ffmpeg', ['-version']);
-    } catch {
-        throw new Error('Audio tools unavailable. On Render, set Build Command to npm ci && bash build.sh; ensure yt-dlp and FFmpeg are installed.');
+        downloader = await getDownloaderPath();
+        await execFileAsync(downloader, ['--version']);
+    } catch (error) {
+        const reason = toolFailureReason(error);
+        throw new Error(`yt-dlp startup check failed (${reason}). On Render, set Build Command to npm ci && bash build.sh and redeploy. If YT_DLP_PATH is set, check it points to an executable on the server.`);
     }
+    try {
+        await execFileAsync('ffmpeg', ['-version']);
+    } catch (error) {
+        throw new Error(`FFmpeg startup check failed (${toolFailureReason(error)}). Ensure the ffmpeg executable is available on the server PATH.`);
+    }
+}
+
+function toolFailureReason(error) {
+    // Report only known codes; process stderr and command arguments may contain secrets.
+    if (error.code === 'ENOENT') return 'executable or required interpreter not found';
+    if (error.code === 'EACCES') return 'executable permission denied';
+    if (error.code === 'ENOEXEC') return 'incompatible executable format';
+    return 'executable returned an error';
 }
 
 export async function downloadAudio(url) {

@@ -13,6 +13,8 @@ Use the existing Node web service with these settings:
 
 Redeploy after updating the build command. The build must print a yt-dlp version and an FFmpeg version before succeeding. Render's native runtime includes FFmpeg: https://render.com/docs/native-runtimes.
 
+If startup fails, inspect the tool-specific startup error and the earlier build logs. A successful dependency installation alone is insufficient: look for `Installing yt-dlp...` and `Build dependencies ready!`. Check any `YT_DLP_PATH` override, or remove it to use the bundled executable. If the new deployment fails, Render can continue serving the previous version, which explains why the old `/start` errors may still appear. Check the live deployment's commit in Render's Deploys page; a restart of the old deployment does not apply the new code.
+
 `build.sh` downloads the official yt-dlp executable into `bin/yt-dlp`. The service resolves that file relative to its source directory, so it does not depend on Render adding `bin` to `PATH`. It also enables the existing Node executable as yt-dlp's JavaScript runtime for YouTube support. Startup checks both audio tools and required credentials before accepting requests.
 
 `spawn yt-dlp ENOENT` means the executable could not be launched; it is not a YouTube URL error. Installing npm packages alone does not install yt-dlp. `/start` now returns instructions, and ordinary text or unsupported URLs are rejected before a download begins.
