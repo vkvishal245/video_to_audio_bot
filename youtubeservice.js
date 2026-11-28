@@ -70,6 +70,26 @@ export async function checkAudioTools() {
 }
 
 async function readConfiguredCookies() {
+    // Option A: base64-encoded cookie content stored directly in an env var.
+    // Set YOUTUBE_COOKIES_B64 on Render to the base64 value of your Netscape cookies file.
+    const b64 = process.env.YOUTUBE_COOKIES_B64?.trim();
+    if (b64) {
+        let contents;
+        try {
+            contents = Buffer.from(b64, 'base64');
+            if (!/^# (?:Netscape )?HTTP Cookie File\r?\n/.test(contents.toString('utf8', 0, 100))) {
+                throw new Error();
+            }
+        } catch {
+            throw Object.assign(
+                new Error('YOUTUBE_COOKIES_B64 must be a base64-encoded Netscape-format cookies file. Cookie contents were not logged.'),
+                { code: 'COOKIE_FILE_INVALID' }
+            );
+        }
+        return contents;
+    }
+
+    // Option B: path to a cookies file on disk (useful for local dev).
     const source = process.env.YT_DLP_COOKIES_FILE?.trim();
     if (!source) return null;
     try {
@@ -79,7 +99,10 @@ async function readConfiguredCookies() {
         }
         return contents;
     } catch {
-        throw Object.assign(new Error('YT_DLP_COOKIES_FILE must point to a readable Netscape-format cookies file. Cookie contents were not logged.'), { code: 'COOKIE_FILE_INVALID' });
+        throw Object.assign(
+            new Error('YT_DLP_COOKIES_FILE must point to a readable Netscape-format cookies file. Cookie contents were not logged.'),
+            { code: 'COOKIE_FILE_INVALID' }
+        );
     }
 }
 

@@ -11,3 +11,8 @@ services:
         sync: false
       - key: NODE_ENV
         value: production
+      # Paste the base64-encoded content of your Netscape cookies file here.
+      # Required to bypass YouTube's cloud-server bot detection on Render.
+      # See README.md → "YouTube cookie setup" for export instructions.
+      - key: YOUTUBE_COOKIES_B64
+        sync: false
