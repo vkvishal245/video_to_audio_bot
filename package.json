@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "node test/bot.test.js",
-    "start": "node index.js"
+    "start": "node index.js",
+    "verify-cookies": "node verify-cookies.js"
   },
   "author": "vishal",
   "license": "ISC",

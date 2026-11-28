@@ -66,7 +66,12 @@ export async function checkAudioTools() {
     } catch (error) {
         throw new Error(`FFmpeg startup check failed (${toolFailureReason(error)}). Ensure the ffmpeg executable is available on the server PATH.`);
     }
-    await readConfiguredCookies();
+    const cookies = await readConfiguredCookies();
+    console.log(JSON.stringify({
+        event: 'audio_tools_ready',
+        cookiesConfigured: Boolean(cookies),
+        cookiesSource: process.env.YOUTUBE_COOKIES_B64 ? 'YOUTUBE_COOKIES_B64' : (process.env.YT_DLP_COOKIES_FILE ? 'YT_DLP_COOKIES_FILE' : 'none')
+    }));
 }
 
 async function readConfiguredCookies() {
@@ -147,7 +152,6 @@ export async function downloadAudio(url, { requestId = randomUUID() } = {}) {
 
     // 5. Download audio and convert to MP3
     let stage = 'starting_downloader';
-    logStage(stage);
     try {
         const cookieArgs = [];
         const cookies = await readConfiguredCookies();
@@ -158,6 +162,7 @@ export async function downloadAudio(url, { requestId = randomUUID() } = {}) {
             await fs.writeFile(cookiePath, cookies, { mode: 0o600 });
             cookieArgs.push('--cookies', cookiePath);
         }
+        logStage(stage, { cookiesApplied: Boolean(cookies) });
         const download = execFileAsync(await getDownloaderPath(), [
             ...cookieArgs,
             '--no-progress',
