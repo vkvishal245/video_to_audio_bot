@@ -1,14 +1,17 @@
 
 import app from './app.js';
 import dotenv from 'dotenv';
-import { downloadAudio } from './youtubeservice.js'
+import { downloadAudio, validateYouTubeUrl, checkAudioTools, cleanupAudio } from './youtubeservice.js';
 import { Bot, registerExpressWebhook } from 'node-telegram-bot-api';
 
 import { fromPath } from 'node-telegram-bot-api/node';
 
-import fs from 'node:fs/promises';
+dotenv.config({ quiet: true });
 
-dotenv.config();
+for (const name of ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_WEBHOOK_SECRET']) {
+    if (!process.env[name]?.trim()) throw new Error(`Missing required environment variable: ${name}`);
+}
+await checkAudioTools();
 
 const port = process.env.PORT || 3000;
 
@@ -20,12 +23,22 @@ registerExpressWebhook(bot, app, {
 });
 
 bot.on('message', async (ctx) => {
-    console.log('Received message:', ctx.message.text);
     let filePath;
 
     try {
+        const text = ctx.message.text?.trim();
+        if (/^\/start(?:@\w+)?(?:\s|$)/i.test(text || '')) {
+            await ctx.reply('Hi! Paste your YouTube link and I’ll send you the audio download.');
+            return;
+        }
+        try {
+            validateYouTubeUrl(text);
+        } catch {
+            await ctx.reply('Please send a valid HTTPS YouTube video link (youtube.com or youtu.be).');
+            return;
+        }
         await ctx.reply('Downloading your audio. Please wait...');
-        filePath = await downloadAudio(ctx.message.text);
+        filePath = await downloadAudio(text);
 
         console.log('Audio downloaded:', filePath);
         const document = await fromPath(filePath);
@@ -39,19 +52,21 @@ bot.on('message', async (ctx) => {
 
     } catch (error) {
 
-        console.error('Download error:', error);
+        console.error('Audio request failed:', error.code || error.name);
 
-        await ctx.reply(
-            `Sorry, something went wrong: ${error.message}`
-        );
+        try {
+            await ctx.reply('Sorry, the audio could not be delivered. The video may be unavailable or restricted. Please try again later.');
+        } catch {
+            console.error('Could not send the failure reply');
+        }
 
     }
     finally {
 
         // Step 5: Delete temporary file
         if (filePath) {
-            await fs.unlink(filePath).catch((error) => {
-                console.error('File cleanup error:', error.message);
+            await cleanupAudio(filePath).catch((error) => {
+                console.error('File cleanup error:', error.code || error.name);
             });
 
             console.log('Temporary file deleted');
